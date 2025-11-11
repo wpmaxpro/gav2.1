@@ -1,0 +1,511 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>ГАВ 2.1</title>
+    <link rel="icon" type="image/x-icon" href="https://ok.elektropostach.mk.ua/home/assets/standart/favicon/670-9e6e7b1ab552c4d39b1c87ae68ca4537af54f6e78d346a2ca78995cf17c4d670.ico">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #ffffff;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .current-status-block {
+            position: sticky;
+            top: 0;
+            background: white;
+            padding: 20px;
+            margin: -20px -20px 20px -20px;
+            border-bottom: 2px solid #e0e0e0;
+            z-index: 100;
+        }
+
+        .header-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            gap: 15px;
+        }
+
+        h1 { color: #333; margin: 0; }
+
+        .time-row {
+            display: flex;
+            justify-content: flex-start;
+            margin-bottom: 15px;
+        }
+
+        .last-update {
+            color: #666;
+            font-size: 14px;
+            text-align: right;
+        }
+
+        .current-status-info {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            color: white;
+            font-size: 18px;
+            font-weight: bold;
+        }
+
+        .current-status-info .status-text { flex: 1; }
+        .current-status-info .countdown-text { font-size: 16px; opacity: 0.95; }
+
+        .timeline { position: relative; margin-top: 30px; }
+
+        .interval {
+            padding: 15px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            color: white;
+            position: relative;
+        }
+
+        .interval.current { opacity: 1; }
+        .interval.before { opacity: 0.2; }
+        .interval.after { opacity: 1; }
+
+        .interval-content {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: nowrap;
+        }
+
+        .interval-time {
+            font-weight: bold;
+            font-size: 16px;
+            white-space: nowrap;
+        }
+
+        .interval-duration {
+            font-size: 14px;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .interval-status {
+            font-size: 14px;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .status-off { background-color: #ef4444; }
+        .status-probably-off { background-color: #f59e0b; }
+        .status-sure-off { background-color: #dc2626; }
+        .status-on { background-color: #10b981; }
+
+        .loading { text-align: center; padding: 40px; color: #666; }
+        .error { background: #fee; color: #c33; padding: 15px; border-radius: 5px; margin-bottom: 20px; }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #3498db;
+            border-radius: 50%;
+            width: 40px; height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        @media (max-width: 768px) {
+            body { padding: 10px; }
+            .container { padding: 15px; }
+            .current-status-block { padding: 15px; margin: -15px -15px 15px -15px; }
+            h1 { font-size: 20px; }
+            .current-status-info { flex-direction: column; align-items: flex-start; gap: 10px; font-size: 16px; }
+            .current-status-info .countdown-text { font-size: 14px; }
+            .interval { padding: 12px; }
+            .interval-content { flex-wrap: wrap; gap: 8px; }
+            .interval-time { font-size: 14px; }
+            .interval-duration { font-size: 13px; }
+            .interval-status { font-size: 13px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="current-status-block">
+            <div class="header-row">
+                <h1>ГАВ 2.1</h1>
+            </div>
+
+            <div class="time-row">
+                <div class="last-update" id="lastUpdate">Завантаження...</div>
+            </div>
+
+            <div id="currentStatusInfo" class="current-status-info" style="display: none;">
+                <div class="status-text" id="currentStatusText"></div>
+                <div class="countdown-text" id="currentCountdown"></div>
+            </div>
+        </div>
+
+        <div id="error"></div>
+        <div id="timeline"></div>
+    </div>
+
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+    <script>
+    (function() {
+        const API_BASE = 'https://off.energy.mk.ua/api/schedule';
+        const QUEUE_ID = 16;
+        const UPDATE_INTERVAL = 60000; // 1 минута
+
+        const CORS_PROXIES = [
+            'https://corsproxy.io/?',
+            'https://api.allorigins.win/raw?url=',
+            'https://api.codetabs.com/v1/proxy?quest='
+        ];
+
+        let currentProxyIndex = 0;
+        let isLoading = false;
+        let updateTimer = null;
+        let currentCheckTimer = null;
+        let countdownTimer = null;
+        let cachedIntervals = [];
+
+        // Форматирование времени для графика (HH:MM)
+        function formatTimeShort(timeString) {
+            if (!timeString) return 'Невідомо';
+            const parts = timeString.split(':');
+            if (parts.length >= 2) return `${parts[0]}:${parts[1]}`;
+            return timeString;
+        }
+
+        // Формат времени в отчёте (HH:MM:SS)
+        function formatTimeFull(timeString) {
+            if (!timeString) return 'Невідомо';
+            return timeString;
+        }
+
+        function getCurrentTime() {
+            const now = new Date();
+            const day = String(now.getDate()).padStart(2, '0');
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            const year = now.getFullYear();
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            const seconds = String(now.getSeconds()).padStart(2, '0');
+            return `${day}.${month}.${year} ${hours}:${minutes}:${seconds}`;
+        }
+
+        function getCurrentTimeOnly() {
+            const now = new Date();
+            const hours = String(now.getHours()).padStart(2, '0');
+            const minutes = String(now.getMinutes()).padStart(2, '0');
+            return `${hours}:${minutes}`;
+        }
+
+        function toMinutes(time) {
+            const [h, m] = time.split(':').map(Number);
+            return h * 60 + m;
+        }
+
+        function isCurrentInterval(start, end) {
+            const current = getCurrentTimeOnly();
+            const currentMinutes = toMinutes(current);
+            const startMinutes = toMinutes(start);
+            const endMinutes = toMinutes(end);
+
+            if (endMinutes < startMinutes) {
+                return currentMinutes >= startMinutes || currentMinutes < endMinutes;
+            }
+            return currentMinutes >= startMinutes && currentMinutes < endMinutes;
+        }
+
+        function getCurrentInterval() {
+            for (let interval of cachedIntervals) {
+                if (isCurrentInterval(interval.start, interval.end)) return interval;
+            }
+            return null;
+        }
+
+        function updateCurrentStatus() {
+            const currentInterval = getCurrentInterval();
+            const $statusInfo = $('#currentStatusInfo');
+            const $statusText = $('#currentStatusText');
+            const $countdown = $('#currentCountdown');
+
+            if (!currentInterval) {
+                $statusInfo.hide();
+                $countdown.text('');
+                return;
+            }
+
+            const statusText = getStatusText(currentInterval.status);
+            const statusClass = getStatusClass(currentInterval.status);
+            const timeRange = `${formatTimeShort(currentInterval.start)} - ${formatTimeShort(currentInterval.end)}`;
+
+            $statusText.text(`${statusText} (${timeRange})`);
+            $statusInfo.removeClass('status-off status-probably-off status-sure-off status-on').addClass(statusClass);
+
+            const now = new Date();
+            const currentMinutes = now.getHours() * 60 + now.getMinutes();
+            const currentSeconds = now.getSeconds();
+            let endMinutes = toMinutes(currentInterval.end);
+            if (endMinutes < currentMinutes) endMinutes += 24 * 60;
+
+            const totalSecondsLeft = (endMinutes * 60) - (currentMinutes * 60 + currentSeconds);
+            if (totalSecondsLeft <= 0) {
+                $countdown.text('');
+                updateCurrentIntervals();
+                return;
+            }
+
+            const hoursLeft = Math.floor(totalSecondsLeft / 3600);
+            const minutesLeft = Math.floor((totalSecondsLeft % 3600) / 60);
+            const secondsLeft = totalSecondsLeft % 60;
+
+            let countdownText = 'Залишилось: ';
+            if (hoursLeft > 0) countdownText += `${hoursLeft} год `;
+            if (minutesLeft > 0 || hoursLeft > 0) countdownText += `${minutesLeft} хв `;
+            countdownText += `${secondsLeft} сек`;
+
+            $countdown.text(countdownText);
+            $statusInfo.show();
+        }
+
+        function getStatusClass(type) {
+            switch(type) {
+                case 'OFF': return 'status-off';
+                case 'PROBABLY_OFF': return 'status-probably-off';
+                case 'SURE_OFF': return 'status-sure-off';
+                default: return 'status-on';
+            }
+        }
+
+
+
+        function getStatusText(type) {
+            switch(type) {
+                case 'OFF': return 'Заплановане відключення';
+                case 'PROBABLY_OFF': return 'Електропостачання можливе';
+                case 'SURE_OFF': return 'Актуальне відключення';
+                default: return 'Є світло';
+            }
+        }
+
+        function getProxyUrl(url) {
+            return CORS_PROXIES[currentProxyIndex] + encodeURIComponent(url);
+        }
+
+        async function fetchWithCors(url, retries = 3) {
+            try {
+                const response = await fetch(getProxyUrl(url));
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response;
+            } catch (error) {
+                if (retries > 1) {
+                    console.warn(`Proxy ${currentProxyIndex} failed, trying next...`);
+                    currentProxyIndex = (currentProxyIndex + 1) % CORS_PROXIES.length;
+                    return fetchWithCors(url, retries - 1);
+                }
+                throw error;
+            }
+        }
+
+        function compareTime(time1, time2) {
+            const t1 = time1.split(':').map(Number);
+            const t2 = time2.split(':').map(Number);
+            if (t1[0] !== t2[0]) return t1[0] - t2[0];
+            if (t1[1] !== t2[1]) return t1[1] - t2[1];
+            return (t1[2] || 0) - (t2[2] || 0);
+        }
+
+        function mergeIntervals(intervals) {
+            if (intervals.length === 0) return [];
+            const merged = [];
+            let current = { ...intervals[0] };
+            for (let i = 1; i < intervals.length; i++) {
+                const next = intervals[i];
+                if (current.status === next.status && current.end === next.start) {
+                    current.end = next.end;
+                    current.ids.push(...next.ids);
+                } else {
+                    merged.push(current);
+                    current = { ...next };
+                }
+            }
+            merged.push(current);
+            return merged;
+        }
+
+        // Обновлённая логика: помечаем интервалы как before/current/after
+        function updateCurrentIntervals() {
+            let currentIndex = -1;
+            for (let i = 0; i < cachedIntervals.length; i++) {
+                if (isCurrentInterval(cachedIntervals[i].start, cachedIntervals[i].end)) {
+                    currentIndex = i;
+                    break;
+                }
+            }
+
+            $('.interval').each(function(index) {
+                const $interval = $(this);
+                $interval.removeClass('before after current');
+
+                if (currentIndex !== -1) {
+                    if (index < currentIndex) $interval.addClass('before');
+                    else if (index === currentIndex) $interval.addClass('current');
+                    else $interval.addClass('after');
+                } else {
+                    // нет текущего интервала — делаем попытку определить прошлое/будущее относительно "сейчас"
+                    const ci = cachedIntervals[index];
+                    if (!ci) return;
+                    const startMin = toMinutes(ci.start);
+                    let endMin = toMinutes(ci.end);
+                    if (endMin <= startMin) endMin += 24 * 60;
+
+                    let nowMin = toMinutes(getCurrentTimeOnly());
+                    // если сейчас меньше начала интервала, возможно интервал относится к следующему дню — сдвинем now
+                    if (nowMin < startMin) nowMin += 24 * 60;
+
+                    if (endMin <= nowMin) $interval.addClass('before');
+                    else $interval.addClass('after');
+                }
+            });
+
+            updateCurrentStatus();
+        }
+
+        async function loadSchedule() {
+            if (isLoading) return;
+            isLoading = true;
+            const $errorDiv = $('#error');
+            const $timelineDiv = $('#timeline');
+            $errorDiv.empty();
+
+            if (cachedIntervals.length === 0) {
+                $timelineDiv.html('<div class="loading"><div class="spinner"></div><p>Завантаження даних...</p></div>');
+            }
+
+            try {
+                // perform requests
+                const requestStartedAt = new Date(); // not used for lastUpdate display
+                const [timeSeriesResponse, activeResponse] = await Promise.all([
+                    fetchWithCors(`${API_BASE}/time-series`),
+                    fetchWithCors(`${API_BASE}/active`)
+                ]);
+
+                const timeSeries = await timeSeriesResponse.json();
+                const activeStatuses = await activeResponse.json();
+
+                const filteredStatuses = activeStatuses.filter(s => s.outage_queue_id === QUEUE_ID);
+                const statusMap = new Map();
+                filteredStatuses.forEach(status => statusMap.set(status.time_series_id, status.type));
+
+                let intervals = timeSeries.map(interval => ({
+                    ids: [interval.id],
+                    start: interval.start,
+                    end: interval.end,
+                    status: statusMap.get(interval.id) || null
+                }));
+
+                intervals.sort((a, b) => compareTime(a.start, b.start));
+                intervals = mergeIntervals(intervals);
+
+                cachedIntervals = intervals;
+
+                displayIntervals(intervals);
+                updateCurrentIntervals();
+
+                // update lastUpdate to the time of successful response (now)
+                $('#lastUpdate').text(`Останнє оновлення: ${getCurrentTime()}`);
+
+            } catch (error) {
+                console.error('Помилка:', error);
+                $errorDiv.html(`<div class="error">Помилка при завантаженні даних: ${error.message}. Спробуйте оновити сторінку.</div>`);
+                if (cachedIntervals.length === 0) $('#timeline').empty();
+            } finally {
+                isLoading = false;
+            }
+        }
+
+        // Возвращает разницу в минутах, учитывая переход через полночь
+        function getMinutesDifference(start, end) {
+            const startMin = toMinutes(start);
+            let endMin = toMinutes(end);
+            if (endMin <= startMin) endMin += 24 * 60;
+            return endMin - startMin;
+        }
+
+        // Формат длительности в виде "1год 30хв" (если часы = 0 — "30хв")
+        function formatDurationHuman(start, end) {
+            const minutes = getMinutesDifference(start, end);
+            const hours = Math.floor(minutes / 60);
+            const mins = minutes % 60;
+            const parts = [];
+            if (hours > 0) parts.push(`${hours}год`);
+            if (mins > 0) parts.push(`${mins}хв`);
+            if (parts.length === 0) parts.push('0хв');
+            return { minutes, human: parts.join(' ') };
+        }
+
+        function displayIntervals(intervals) {
+            const $timelineDiv = $('#timeline');
+            if (intervals.length === 0) {
+                $timelineDiv.html('<div class="loading">Немає даних для відображення</div>');
+                return;
+            }
+            const $timeline = $('<div class="timeline"></div>');
+            intervals.forEach(interval => {
+                const statusClass = getStatusClass(interval.status);
+                const statusText = getStatusText(interval.status);
+                const isCurrent = isCurrentInterval(interval.start, interval.end);
+                const dur = formatDurationHuman(interval.start, interval.end);
+
+                const $interval = $(`
+                    <div class="interval ${statusClass} ${isCurrent ? 'current' : ''}"
+                         data-start="${interval.start}"
+                         data-end="${interval.end}">
+                        <div class="interval-content">
+                            <div class="interval-time">${formatTimeShort(interval.start)} - ${formatTimeShort(interval.end)} ${statusText}</div>
+                            <div class="interval-status">${dur.human}</div>
+                        </div>
+                    </div>
+                `);
+                $timeline.append($interval);
+            });
+            $timelineDiv.html($timeline);
+        }
+
+        // Инициализация
+        $(document).ready(function() {
+            // первая загрузка
+            loadSchedule();
+
+            // обновление данных раз в минуту (без кнопки)
+            updateTimer = setInterval(loadSchedule, UPDATE_INTERVAL);
+
+            // обновление подсветки текущего интервала каждые 10 секунд
+            currentCheckTimer = setInterval(updateCurrentIntervals, 10000);
+
+            // обновление обратного отсчёта каждую секунду
+            countdownTimer = setInterval(updateCurrentStatus, 1000);
+        });
+
+        // Очистка таймеров
+        $(window).on('beforeunload', function() {
+            if (updateTimer) clearInterval(updateTimer);
+            if (currentCheckTimer) clearInterval(currentCheckTimer);
+            if (countdownTimer) clearInterval(countdownTimer);
+        });
+    })();
+    </script>
+</body>
+</html>
