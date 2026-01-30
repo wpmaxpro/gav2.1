@@ -176,13 +176,14 @@
         const QUEUE_ID = 16;
         const UPDATE_INTERVAL = 60000; // 1 минута
 
+        // Для GitHub Pages (и любых статичных хостингов) лучше сразу использовать публичные CORS-прокси.
+        // Порядок: сначала часто-работающий allorigins, затем codetabs и corsproxy.io в качестве fallback.
         const CORS_PROXIES = [
-            'https://corsproxy.io/?',
             'https://api.allorigins.win/raw?url=',
-            'https://api.codetabs.com/v1/proxy?quest='
+            'https://api.codetabs.com/v1/proxy?quest=',
+            'https://corsproxy.io/?'
         ];
 
-        let currentProxyIndex = 0;
         let isLoading = false;
         let updateTimer = null;
         let currentCheckTimer = null;
@@ -310,22 +311,34 @@
             }
         }
 
-        function getProxyUrl(url) {
-            return CORS_PROXIES[currentProxyIndex] + encodeURIComponent(url);
+        function getProxyUrl(url, proxy) {
+            return proxy + encodeURIComponent(url);
         }
 
-        async function fetchWithCors(url, retries = 3) {
-            try {
-                const response = await fetch(getProxyUrl(url));
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                return response;
-            } catch (error) {
-                if (retries > 1) {
-                    console.warn(`Proxy ${currentProxyIndex} failed, trying next...`);
-                    currentProxyIndex = (currentProxyIndex + 1) % CORS_PROXIES.length;
-                    return fetchWithCors(url, retries - 1);
+        // Простая функция: пробует прокси из списка по очереди и возвращает первый успешный Response.
+        // Это максимально простая и надёжная стратегия для GitHub Pages — не требует серверного кода.
+        async function fetchWithCors(url) {
+            let lastError = null;
+            for (const proxy of CORS_PROXIES) {
+                const proxied = getProxyUrl(url, proxy);
+                try {
+                    const resp = await fetch(proxied);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    return resp;
+                } catch (err) {
+                    console.warn('Proxy failed:', proxy, err);
+                    lastError = err;
+                    // пробуем следующий прокси
                 }
-                throw error;
+            }
+            // Если все прокси упали — пробуем прямой запрос в крайнем случае (опционально)
+            try {
+                const resp = await fetch(url);
+                if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                return resp;
+            } catch (err) {
+                console.warn('Direct fetch also failed:', err);
+                throw lastError || err || new Error('Fetch failed');
             }
         }
 
