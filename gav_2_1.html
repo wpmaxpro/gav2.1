@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>ГАВ 2.1</title>
+    <title>ГАВ 2.1 v0.0.1</title>
     <link rel="icon" type="image/x-icon" href="https://ok.elektropostach.mk.ua/home/assets/standart/favicon/670-9e6e7b1ab552c4d39b1c87ae68ca4537af54f6e78d346a2ca78995cf17c4d670.ico">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -177,8 +177,8 @@
         const UPDATE_INTERVAL = 60000; // 1 минута
 
         const CORS_PROXIES = [
-            'https://corsproxy.io/?',
-            'https://api.allorigins.win/raw?url=',
+          //  'https://corsproxy.io/?',
+         //   'https://api.allorigins.win/raw?url=',
             'https://api.codetabs.com/v1/proxy?quest='
         ];
 
@@ -311,6 +311,7 @@
         }
 
         function getProxyUrl(url) {
+            return url;
             return CORS_PROXIES[currentProxyIndex] + encodeURIComponent(url);
         }
 
